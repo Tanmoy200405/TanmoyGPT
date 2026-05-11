@@ -21,22 +21,31 @@ export const textMessageController = async (req, res) => {
         const chat = await Chat.findOne({userId, _id: chatId})
         chat.messages.push({role: "user", content: prompt, timestamp: Date.now(), isImage: false})
 
-        const { choices } = await openai.chat.completions.create({
-        model: "models/gemini-1.5-flash",
-        messages: [
-            {
-                role: "user",
-                content: prompt,
-            },
-        ],
-    });
+        // Using Direct Gemini API to avoid 404/compatibility issues
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+        
+        const response = await axios.post(geminiUrl, {
+            contents: [{ parts: [{ text: prompt }] }]
+        });
 
-    const reply = {...choices[0].message, timestamp: Date.now(), isImage: false}
-    res.json({success: true, reply})
+        if (!response.data.candidates || response.data.candidates.length === 0) {
+            throw new Error('No response from Gemini API');
+        }
 
-    chat.messages.push(reply)
-    await chat.save()
+        const replyContent = response.data.candidates[0].content.parts[0].text;
+
+        const assistantMessage = {
+            role: "assistant",
+            content: replyContent,
+            timestamp: Date.now(),
+            isImage: false
+        }
+
+        chat.messages.push(assistantMessage)
+        await chat.save()
     await User.updateOne({_id: userId}, {$inc: {credits: -1}})
+
+    res.json({success: true, reply: assistantMessage})
 
     } catch (error) {
         console.error('Gemini API Error:', error.message)
